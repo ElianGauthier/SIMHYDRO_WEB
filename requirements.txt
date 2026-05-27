@@ -1,1 +1,7 @@
 streamlit
+pandas
+numpy
+matplotlib
+openpyxl
+pydeck
+xlrd
