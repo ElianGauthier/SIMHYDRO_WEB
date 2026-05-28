@@ -287,6 +287,26 @@ def generer_image_schema_dimensionnement(puissance_kw):
 
     ax.plot([largeur_local / 2, largeur_local / 2], [longueur_local, longueur_local + 1], linewidth=2)
     ax.text(largeur_local / 2 + 0.1, longueur_local + 0.5, "Canal de fuite", fontsize=9)
+    # Dimensions largeur
+    ax.annotate(
+        f"{largeur_local:.1f} m",
+        xy=(0, longueur_local + 0.3),
+        xytext=(largeur_local / 2, longueur_local + 0.3),
+        ha="center",
+        fontsize=10,
+        arrowprops=dict(arrowstyle="<->")
+    )
+
+    # Dimensions longueur
+    ax.annotate(
+        f"{longueur_local:.1f} m",
+        xy=(-0.3, 0),
+        xytext=(-0.3, longueur_local / 2),
+        rotation=90,
+        va="center",
+        fontsize=10,
+        arrowprops=dict(arrowstyle="<->")
+    )
 
     ax.set_title(f"Schéma indicatif - {categorie}\nPuissance : {puissance_kw:.2f} kW")
     ax.set_xlim(-1, largeur_local + 2)
