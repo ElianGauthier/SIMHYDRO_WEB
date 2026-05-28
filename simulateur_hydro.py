@@ -298,6 +298,7 @@ def generer_image_schema_dimensionnement(puissance_kw):
     plt.close(fig)
     buffer.seek(0)
     return buffer
+
 def generer_image_carte_site(latitude, longitude):
     buffer = BytesIO()
 
