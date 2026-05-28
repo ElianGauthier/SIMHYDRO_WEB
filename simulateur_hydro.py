@@ -203,39 +203,39 @@ def afficher_schema_dimensionnement(puissance_kw):
 if mode_calcul == "Accueil":
     logo = Image.open("logo.png")
 
-col1, col2 = st.columns([1, 4])
+    col1, col2 = st.columns([1, 4])
 
-with col1:
-    st.image(logo, width=120)
+    with col1:
+        st.image(logo, width=120)
 
-with col2:
-    st.title("SIMHYDRO")
-    st.subheader("Simulateur hydroélectrique sur réseau d'eau")
-    st.subheader("Outil d'aide à l'identification du potentiel hydroélectrique sur réseau d'eau")
+    with col2:
+        st.title("SIMHYDRO")
+        st.subheader("Simulateur hydroélectrique sur réseau d'eau")
+        st.subheader("Outil d'aide à l'identification du potentiel hydroélectrique sur réseau d'eau")
 
-    st.markdown("""
-    Cette application permet d'estimer le potentiel de production hydroélectrique
-    en remplacement ou en dérivation d'un régulateur de pression.
+        st.markdown("""
+        Cette application permet d'estimer le potentiel de production hydroélectrique
+        en remplacement ou en dérivation d'un régulateur de pression.
 
-    ### Fonctionnalités principales
-    - calcul simple sur un site ;
-    - import de données horaires Excel ;
-    - comparaison de plusieurs régulateurs ;
-    - prise en compte des pertes de charge ;
-    - estimation économique ;
-    - classement par productible ;
-    - export de résultats pour étude technique.
+        ### Fonctionnalités principales
+        - calcul simple sur un site ;
+        - import de données horaires Excel ;
+        - comparaison de plusieurs régulateurs ;
+        - prise en compte des pertes de charge ;
+        - estimation économique ;
+        - classement par productible ;
+        - export de résultats pour étude technique.
 
-    ### Version
-    Version : **1.0**
+        ### Version
+        Version : **1.0**
 
-    ### Contact
-    Développé par : **Elian Gauthier**  
-    Contact : **06 03 99 65 67**
+        ### Contact
+        Développé par : **Elian Gauthier**  
+        Contact : **06 03 99 65 67**
 
-    ### Notes techniques
-    Les calculs sont indicatifs et doivent être confirmés .
-    """)
+        ### Notes techniques
+        Les calculs sont indicatifs et doivent être confirmés .
+        """)
 # ============================================================
 # MODE 1 : CALCUL SIMPLE
 # ============================================================
