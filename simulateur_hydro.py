@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pydeck as pdk
 from staticmap import StaticMap, CircleMarker, Line
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from PIL import Image
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
@@ -109,7 +109,7 @@ def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance
 
         elements.append(Paragraph("Vue cartographique du site", styles["Heading2"]))
         carte_buffer = generer_image_carte_site(latitude, longitude)
-        elements.append(Image(carte_buffer, width=420, height=280))
+        elements.append(RLImage(carte_buffer, width=420, height=280))
         elements.append(Spacer(1, 12))
 
     tableau = [["Indicateur", "Valeur"]]
@@ -132,7 +132,7 @@ def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance
     if puissance_kw is not None:
         elements.append(Paragraph("Schéma indicatif de dimensionnement", styles["Heading2"]))
         schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
-        elements.append(Image(schema_buffer, width=420, height=320))
+        elements.append(RLImage(schema_buffer, width=420, height=320))
         elements.append(Spacer(1, 12))
 
     elements.append(Paragraph(
