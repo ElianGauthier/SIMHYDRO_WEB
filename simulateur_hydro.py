@@ -212,41 +212,52 @@ def afficher_schema_dimensionnement(puissance_kw):
 # PAGE D'ACCUEIL
 # ============================================================
 if mode_calcul == "Accueil":
-    logo = Image.open("logo.png")
 
-    col1, col2 = st.columns([1, 4])
+    st.markdown("""
+    ## Outil d'aide à l'identification du potentiel hydroélectrique
+
+    Cette application permet d'estimer le potentiel de production hydroélectrique
+    en remplacement ou en dérivation d'un régulateur de pression.
+    """)
+
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.image(logo, width=120)
+        st.info("""
+        ### Fonctionnalités principales
+
+        - Calcul simple sur un site
+        - Import de données horaires Excel
+        - Comparaison de plusieurs régulateurs
+        - Pertes de charge avancées
+        - Cartographie GPS
+        - Dimensionnement indicatif
+        - Export PDF automatique
+        - Estimation économique
+        """)
 
     with col2:
-        st.title("SIMHYDRO")
-        st.subheader("Simulateur hydroélectrique sur réseau d'eau")
-        st.subheader("Outil d'aide à l'identification du potentiel hydroélectrique sur réseau d'eau")
+        st.success("""
+        ### Informations application
 
-        st.markdown("""
-        Cette application permet d'estimer le potentiel de production hydroélectrique
-        en remplacement ou en dérivation d'un régulateur de pression.
+        **Version :** 1.0
 
-        ### Fonctionnalités principales
-        - calcul simple sur un site ;
-        - import de données horaires Excel ;
-        - comparaison de plusieurs régulateurs ;
-        - prise en compte des pertes de charge ;
-        - estimation économique ;
-        - classement par productible ;
-        - export de résultats pour étude technique.
+        **Développé par :**
+        Elian Gauthier
 
-        ### Version
-        Version : **1.0**
+        **Contact :**
+        06 03 99 65 67
 
-        ### Contact
-        Développé par : **Elian Gauthier**  
-        Contact : **06 03 99 65 67**
-
-        ### Notes techniques
-        Les calculs sont indicatifs et doivent être confirmés .
+        **Usage :**
+        Outil d'aide à la décision technique.
         """)
+
+    st.warning("""
+    ### Notes techniques
+
+    Les résultats fournis sont indicatifs et doivent être validés
+    par une étude hydraulique détaillée et une analyse terrain.
+    """)
 # ============================================================
 # MODE 1 : CALCUL SIMPLE
 # ============================================================
