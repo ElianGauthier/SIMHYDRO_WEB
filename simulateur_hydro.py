@@ -430,6 +430,7 @@ elif mode_calcul == "Calcul simple":
         "CO2 évité": f"{co2_evite_kg_an:.0f} kgCO2/an",
         "Temps de retour brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
     }
+    puissance_affichage_kw = max(float(puissance_kw), 1)
 
     pdf = generer_pdf_rapport(
     "Rapport SIMHYDRO - Calcul simple",
@@ -445,7 +446,7 @@ elif mode_calcul == "Calcul simple":
         file_name="rapport_simhydro_calcul_simple.pdf",
         mime="application/pdf"
     )
-    puissance_affichage_kw = max(float(puissance_kw), 1)
+    
 
 
     st.header("Localisation et dimensionnement du site")
@@ -1069,6 +1070,7 @@ elif mode_calcul == "Import Excel - données horaires":
                 "CO2 évité": f"{co2_total:.0f} kgCO2",
                 "TRI brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
             }
+            puissance_affichage_kw = max(float(puissance_kw), 1)
 
             pdf = generer_pdf_rapport("Rapport SIMHYDRO - Données horaires", donnees_pdf)
 
