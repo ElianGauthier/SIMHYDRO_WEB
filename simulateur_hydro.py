@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pydeck as pdk
+from PIL import Image
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -21,6 +22,7 @@ st.set_page_config(
     page_title="Simulateur hydroélectricité réseau d'eau",
     layout="wide"
 )
+st.sidebar.image("logo.png", width=150)
 
 st.title("Simulateur de production hydroélectrique sur réseau d'eau")
 st.caption("Estimation de production en remplacement ou dérivation d'un régulateur de pression")
@@ -199,7 +201,16 @@ def afficher_schema_dimensionnement(puissance_kw):
 # PAGE D'ACCUEIL
 # ============================================================
 if mode_calcul == "Accueil":
-    st.title("SIMHYDRO - Simulateur hydroélectrique")
+    logo = Image.open("logo.png")
+
+col1, col2 = st.columns([1, 4])
+
+with col1:
+    st.image(logo, width=120)
+
+with col2:
+    st.title("SIMHYDRO")
+    st.subheader("Simulateur hydroélectrique sur réseau d'eau")
     st.subheader("Outil d'aide à l'identification du potentiel hydroélectrique sur réseau d'eau")
 
     st.markdown("""

@@ -6,3 +6,4 @@ openpyxl
 pydeck
 xlrd
 reportlab
+pillow
