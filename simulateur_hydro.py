@@ -3,7 +3,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pydeck as pdk
-
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
 # ============================================================
 # Simulateur de production hydroélectrique sur réseau d'eau
 # Avec mode simple + import Excel de données horaires
@@ -24,7 +28,7 @@ st.caption("Estimation de production en remplacement ou dérivation d'un régula
 st.sidebar.header("Mode de calcul")
 mode_calcul = st.sidebar.radio(
     "Choisir le mode",
-    ["Calcul simple", "Import Excel - données horaires"]
+    ["Accueil", "Calcul simple", "Import Excel - données horaires", "Comparaison multi-régulateurs"]
 )
 
 # ============================================================
@@ -65,6 +69,46 @@ def calcul_pertes_charge(debit_m3h, longueur_m, diametre_mm, rugosite_mm, pertes
     perte_totale_bar = perte_totale_mce * RHO_EAU * G / BAR_TO_PA
 
     return perte_totale_bar, perte_totale_mce, vitesse
+
+def generer_pdf_rapport(titre, donnees):
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    elements.append(Paragraph(titre, styles["Title"]))
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Rapport automatique de simulation hydroélectrique", styles["Heading2"]))
+    elements.append(Spacer(1, 12))
+
+    tableau = [["Indicateur", "Valeur"]]
+
+    for cle, valeur in donnees.items():
+        tableau.append([str(cle), str(valeur)])
+
+    table = Table(tableau, colWidths=[250, 200])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+
+    elements.append(table)
+    elements.append(Spacer(1, 18))
+
+    elements.append(Paragraph(
+        "Note : les résultats sont indicatifs et doivent être validés par une étude hydraulique détaillée.",
+        styles["Normal"]
+    ))
+
+    doc.build(elements)
+
+    buffer.seek(0)
+    return buffer
 def afficher_schema_dimensionnement(puissance_kw):
     fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -151,10 +195,40 @@ def afficher_schema_dimensionnement(puissance_kw):
     ax.axis("off")
 
     st.pyplot(fig)
+    # ============================================================
+# PAGE D'ACCUEIL
+# ============================================================
+if mode_calcul == "Accueil":
+    st.title("SIMHYDRO - Simulateur hydroélectrique")
+    st.subheader("Outil d'aide à l'identification du potentiel hydroélectrique sur réseau d'eau")
+
+    st.markdown("""
+    Cette application permet d'estimer le potentiel de production hydroélectrique
+    en remplacement ou en dérivation d'un régulateur de pression.
+
+    ### Fonctionnalités principales
+    - calcul simple sur un site ;
+    - import de données horaires Excel ;
+    - comparaison de plusieurs régulateurs ;
+    - prise en compte des pertes de charge ;
+    - estimation économique ;
+    - classement par productible ;
+    - export de résultats pour étude technique.
+
+    ### Version
+    Version : **1.0**
+
+    ### Contact
+    Développé par : **Elian Gauthier**  
+    Contact : **06 03 99 65 67**
+
+    ### Notes techniques
+    Les calculs sont indicatifs et doivent être confirmés .
+    """)
 # ============================================================
 # MODE 1 : CALCUL SIMPLE
 # ============================================================
-if mode_calcul == "Calcul simple":
+elif mode_calcul == "Calcul simple":
     st.sidebar.header("Données d'entrée")
 
     debit_m3h = st.sidebar.number_input("Débit moyen", min_value=0.0, value=50.0, step=1.0)
@@ -207,6 +281,7 @@ if mode_calcul == "Calcul simple":
     prix_electricite = st.sidebar.number_input("Prix de l'électricité", min_value=0.0, value=0.15, step=0.01)
     investissement = st.sidebar.number_input("Investissement estimé", min_value=0.0, value=50000.0, step=1000.0)
     facteur_co2 = st.sidebar.number_input("Facteur CO₂ évité", min_value=0.0, value=0.052, step=0.001)
+   
     
     pression_recuperable_bar, hauteur_mce, puissance_kw = calcul_hydro(
         debit_m3h,
@@ -219,6 +294,27 @@ if mode_calcul == "Calcul simple":
     gain_euros_an = production_kwh_an * prix_electricite
     co2_evite_kg_an = production_kwh_an * facteur_co2
     tri = investissement / gain_euros_an if gain_euros_an > 0 else None
+    donnees_pdf = {
+        "Mode": "Calcul simple",
+        "Débit moyen": f"{debit_m3h:.2f} m³/h",
+        "Pression amont": f"{pression_amont_bar:.2f} bar",
+        "Pression aval": f"{pression_aval_bar:.2f} bar",
+        "Pertes de charge": f"{pertes_charge_bar:.2f} bar",
+        "Puissance estimée": f"{puissance_kw:.2f} kW",
+        "Production annuelle": f"{production_kwh_an:.0f} kWh/an",
+        "Gain annuel": f"{gain_euros_an:.0f} EUR/an",
+        "CO2 évité": f"{co2_evite_kg_an:.0f} kgCO2/an",
+        "Temps de retour brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
+    }
+
+    pdf = generer_pdf_rapport("Rapport SIMHYDRO - Calcul simple", donnees_pdf)
+
+    st.download_button(
+        label="Télécharger le rapport PDF",
+        data=pdf,
+        file_name="rapport_simhydro_calcul_simple.pdf",
+        mime="application/pdf"
+    )
     puissance_affichage_kw = max(float(puissance_kw), 1)
 
 
@@ -815,6 +911,7 @@ else:
             st.write(e)
     else:
         st.info("Importe un fichier Excel pour lancer la simulation horaire.")
+        
 
 st.markdown("""
 ---
