@@ -539,7 +539,7 @@ elif mode_calcul == "Calcul simple":
 # ============================================================
 # MODE 2 : IMPORT EXCEL DONNÉES HORAIRES
 # ============================================================
-else:
+elif mode_calcul == "Import Excel - données horaires":
     st.sidebar.header("Paramètres économiques")
     st.sidebar.header("Localisation du site")
 
@@ -899,6 +899,30 @@ else:
 
             st.header("Export")
             csv = df.to_csv(index=False, sep=";").encode("utf-8")
+            donnees_pdf = {
+                "Mode": "Import Excel données horaires",
+                "Heures analysées": f"{heures_analysees:.0f} h",
+                "Débit moyen": f"{debit_moyen:.2f} m³/h",
+                "Pression récupérable moyenne": f"{pression_moyenne_recup:.2f} bar",
+                "Pertes moyennes": f"{pertes_moyennes:.2f} bar",
+                "Vitesse moyenne": f"{vitesse_moyenne:.2f} m/s",
+                "Puissance moyenne": f"{puissance_moyenne:.2f} kW",
+                "Puissance maximale": f"{puissance_max:.2f} kW",
+                "Production totale": f"{production_totale:.0f} kWh",
+                "Gain total": f"{gain_total:.0f} EUR",
+                "CO2 évité": f"{co2_total:.0f} kgCO2",
+                "TRI brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
+            }
+
+            pdf = generer_pdf_rapport("Rapport SIMHYDRO - Données horaires", donnees_pdf)
+
+            st.download_button(
+                label="Télécharger le rapport PDF",
+                data=pdf,
+                file_name="rapport_simhydro_donnees_horaires.pdf",
+                mime="application/pdf"
+            )
+
             st.download_button(
                 label="Télécharger les résultats horaires en CSV",
                 data=csv,
