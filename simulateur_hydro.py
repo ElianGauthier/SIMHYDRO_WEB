@@ -22,7 +22,18 @@ st.set_page_config(
     page_title="Simulateur hydroélectricité réseau d'eau",
     layout="wide"
 )
-st.sidebar.image("logo.png", width=150)
+col_logo, col_titre = st.columns([1, 5])
+
+with col_logo:
+    try:
+        st.image("logo.png", width=120)
+    except:
+        pass
+
+with col_titre:
+    st.title("SIMHYDRO")
+    st.subheader("Simulateur de production hydroélectrique sur réseau d'eau")
+    st.caption("Estimation de production en remplacement ou dérivation d'un régulateur de pression")
 
 st.title("Simulateur de production hydroélectrique sur réseau d'eau")
 st.caption("Estimation de production en remplacement ou dérivation d'un régulateur de pression")
