@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pydeck as pdk
+from staticmap import StaticMap, CircleMarker, Line
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from PIL import Image
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
@@ -83,7 +85,7 @@ def calcul_pertes_charge(debit_m3h, longueur_m, diametre_mm, rugosite_mm, pertes
 
     return perte_totale_bar, perte_totale_mce, vitesse
 
-def generer_pdf_rapport(titre, donnees):
+def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance_kw=None):
     buffer = BytesIO()
 
     doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -95,6 +97,20 @@ def generer_pdf_rapport(titre, donnees):
 
     elements.append(Paragraph("Rapport automatique de simulation hydroélectrique", styles["Heading2"]))
     elements.append(Spacer(1, 12))
+
+    if latitude is not None and longitude is not None:
+        lien_maps = f"https://www.google.com/maps?q={latitude},{longitude}"
+
+        elements.append(Paragraph("Localisation du site", styles["Heading2"]))
+        elements.append(Paragraph(f"Latitude : {latitude:.6f}", styles["Normal"]))
+        elements.append(Paragraph(f"Longitude : {longitude:.6f}", styles["Normal"]))
+        elements.append(Paragraph(f"Lien Google Maps : {lien_maps}", styles["Normal"]))
+        elements.append(Spacer(1, 12))
+
+        elements.append(Paragraph("Vue cartographique du site", styles["Heading2"]))
+        carte_buffer = generer_image_carte_site(latitude, longitude)
+        elements.append(Image(carte_buffer, width=420, height=280))
+        elements.append(Spacer(1, 12))
 
     tableau = [["Indicateur", "Valeur"]]
 
@@ -112,6 +128,12 @@ def generer_pdf_rapport(titre, donnees):
 
     elements.append(table)
     elements.append(Spacer(1, 18))
+
+    if puissance_kw is not None:
+        elements.append(Paragraph("Schéma indicatif de dimensionnement", styles["Heading2"]))
+        schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
+        elements.append(Image(schema_buffer, width=420, height=320))
+        elements.append(Spacer(1, 12))
 
     elements.append(Paragraph(
         "Note : les résultats sont indicatifs et doivent être validés par une étude hydraulique détaillée.",
@@ -208,6 +230,75 @@ def afficher_schema_dimensionnement(puissance_kw):
     ax.axis("off")
 
     st.pyplot(fig)
+
+def generer_image_schema_dimensionnement(puissance_kw):
+    buffer = BytesIO()
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    if puissance_kw < 5:
+        largeur_local = 3.0
+        longueur_local = 4.0
+        taille_turbine = 0.5
+        taille_armoire = 0.6
+        categorie = "Micro-installation"
+    elif puissance_kw < 30:
+        largeur_local = 4.0
+        longueur_local = 5.5
+        taille_turbine = 0.8
+        taille_armoire = 0.9
+        categorie = "Petite installation"
+    else:
+        largeur_local = 5.5
+        longueur_local = 7.0
+        taille_turbine = 1.2
+        taille_armoire = 1.2
+        categorie = "Installation renforcée"
+
+    ax.add_patch(plt.Rectangle((0, 0), largeur_local, longueur_local, fill=False, linewidth=2))
+    ax.plot([largeur_local / 2, largeur_local / 2], [-1, longueur_local], linewidth=3)
+    ax.text(largeur_local / 2 + 0.1, -0.7, "Conduite forcée", fontsize=9)
+
+    ax.add_patch(plt.Rectangle(
+        (largeur_local / 2 - taille_turbine / 2, longueur_local * 0.45),
+        taille_turbine,
+        taille_turbine,
+        fill=False,
+        linewidth=2
+    ))
+    ax.text(largeur_local / 2 + 0.4, longueur_local * 0.55, "Turbine", fontsize=9)
+
+    ax.add_patch(plt.Rectangle(
+        (largeur_local / 2 + 0.5, longueur_local * 0.5),
+        0.8,
+        0.5,
+        fill=False,
+        linewidth=2
+    ))
+    ax.text(largeur_local / 2 + 1.4, longueur_local * 0.58, "Alternateur", fontsize=9)
+
+    ax.add_patch(plt.Rectangle(
+        (largeur_local - taille_armoire - 0.4, 0.5),
+        taille_armoire,
+        taille_armoire * 1.5,
+        fill=False,
+        linewidth=2
+    ))
+    ax.text(largeur_local - taille_armoire - 0.5, 0.2, "Armoire électrique", fontsize=9)
+
+    ax.plot([largeur_local / 2, largeur_local / 2], [longueur_local, longueur_local + 1], linewidth=2)
+    ax.text(largeur_local / 2 + 0.1, longueur_local + 0.5, "Canal de fuite", fontsize=9)
+
+    ax.set_title(f"Schéma indicatif - {categorie}\nPuissance : {puissance_kw:.2f} kW")
+    ax.set_xlim(-1, largeur_local + 2)
+    ax.set_ylim(-1, longueur_local + 1.5)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buffer.seek(0)
+    return buffer
+
     # ============================================================
 # PAGE D'ACCUEIL
 # ============================================================
@@ -240,7 +331,7 @@ if mode_calcul == "Accueil":
         st.success("""
         ### Informations application
 
-        **Version :** 1.0
+        **Version :** 1.5
 
         **Développé par :**
         Elian Gauthier
@@ -264,10 +355,10 @@ if mode_calcul == "Accueil":
 elif mode_calcul == "Calcul simple":
     st.sidebar.header("Données d'entrée")
 
-    debit_m3h = st.sidebar.number_input("Débit moyen", min_value=0.0, value=50.0, step=1.0)
+    debit_m3h = st.sidebar.number_input("Débit moyen en m3/h", min_value=0.0, value=50.0, step=1.0)
     pression_amont_bar = st.sidebar.number_input("Pression amont", min_value=0.0, value=8.0, step=0.1)
     pression_aval_bar = st.sidebar.number_input("Pression aval souhaitée", min_value=0.0, value=4.0, step=0.1)
-    st.sidebar.header("Localisation du site")
+    st.sidebar.header("Localisation du site simple")
 
     latitude = st.sidebar.number_input("Latitude GPS", value=43.7000, format="%.6f")
     longitude = st.sidebar.number_input("Longitude GPS", value=7.2500, format="%.6f")
@@ -340,7 +431,13 @@ elif mode_calcul == "Calcul simple":
         "Temps de retour brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
     }
 
-    pdf = generer_pdf_rapport("Rapport SIMHYDRO - Calcul simple", donnees_pdf)
+    pdf = generer_pdf_rapport(
+    "Rapport SIMHYDRO - Calcul simple",
+    donnees_pdf,
+    latitude=latitude,
+    longitude=longitude,
+    puissance_kw=puissance_affichage_kw
+    )
 
     st.download_button(
         label="Télécharger le rapport PDF",
@@ -881,9 +978,35 @@ elif mode_calcul == "Import Excel - données horaires":
             )
             st.header("Schéma indicatif des équipements")
             afficher_schema_dimensionnement(puissance_affichage_kw)
+            def generer_image_carte_site(latitude, longitude):
+                buffer = BytesIO()
 
-    
+                carte = StaticMap(
+                    600,
+                    400,
+                    url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                )
 
+                marqueur_site = CircleMarker((longitude, latitude), "red", 12)
+                carte.add_marker(marqueur_site)
+
+                decalage = 0.00008
+
+                contour_local = [
+                    (longitude - decalage, latitude - decalage),
+                    (longitude + decalage, latitude - decalage),
+                    (longitude + decalage, latitude + decalage),
+                    (longitude - decalage, latitude + decalage),
+                    (longitude - decalage, latitude - decalage),
+                ]
+
+                carte.add_line(Line(contour_local, "blue", 3))
+
+                image = carte.render(zoom=18)
+                image.save(buffer, format="PNG")
+
+                buffer.seek(0)
+                return buffer
             st.header("Résultats avec données horaires")
             st.metric("Pertes de charge moyennes", f"{pertes_moyennes:.2f} bar")
             st.metric("Vitesse moyenne", f"{vitesse_moyenne:.2f} m/s")
