@@ -298,6 +298,35 @@ def generer_image_schema_dimensionnement(puissance_kw):
     plt.close(fig)
     buffer.seek(0)
     return buffer
+def generer_image_carte_site(latitude, longitude):
+    buffer = BytesIO()
+
+    carte = StaticMap(
+        600,
+        400,
+        url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    )
+
+    marqueur_site = CircleMarker((longitude, latitude), "red", 12)
+    carte.add_marker(marqueur_site)
+
+    decalage = 0.00008
+
+    contour_local = [
+        (longitude - decalage, latitude - decalage),
+        (longitude + decalage, latitude - decalage),
+        (longitude + decalage, latitude + decalage),
+        (longitude - decalage, latitude + decalage),
+        (longitude - decalage, latitude - decalage),
+    ]
+
+    carte.add_line(Line(contour_local, "blue", 3))
+
+    image = carte.render(zoom=18)
+    image.save(buffer, format="PNG")
+
+    buffer.seek(0)
+    return buffer
 
     # ============================================================
 # PAGE D'ACCUEIL
