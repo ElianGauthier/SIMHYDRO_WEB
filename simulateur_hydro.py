@@ -407,36 +407,36 @@ def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance
     elements.append(table)
     elements.append(Spacer(1, 18))
 
-# Affichage du schéma uniquement pour l'hydro
-if puissance_kw is not None and titre.startswith("Rapport SIMHYDRO - Calcul"):
-    elements.append(
-        Paragraph(
-            "Schéma indicatif de dimensionnement hydroélectrique",
-            styles["Heading2"]
+    # Affichage du schéma uniquement pour l'hydro
+    if puissance_kw is not None and titre.startswith("Rapport SIMHYDRO - Calcul"):
+        elements.append(
+            Paragraph(
+                "Schéma indicatif de dimensionnement hydroélectrique",
+                styles["Heading2"]
+            )
         )
-    )
 
-    schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
+        schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
 
-    elements.append(
-        RLImage(
-            schema_buffer,
-            width=420,
-            height=320
+        elements.append(
+            RLImage(
+                schema_buffer,
+                width=420,
+                height=320
+            )
         )
-    )
 
-    elements.append(Spacer(1, 12))
+        elements.append(Spacer(1, 12))
 
-    elements.append(Paragraph(
-        "Note : les résultats sont indicatifs et doivent être validés par une étude hydraulique détaillée.",
-        styles["Normal"]
-    ))
+        elements.append(Paragraph(
+            "Note : les résultats sont indicatifs et doivent être validés par une étude hydraulique détaillée.",
+            styles["Normal"]
+        ))
 
-    doc.build(elements)
+        doc.build(elements)
 
-    buffer.seek(0)
-    return buffer
+        buffer.seek(0)
+        return buffer
 def afficher_schema_dimensionnement(puissance_kw):
     fig, ax = plt.subplots(figsize=(8, 7))
 
