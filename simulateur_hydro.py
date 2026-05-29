@@ -363,7 +363,7 @@ def afficher_carte_pv(latitude, longitude, longueur_m, largeur_m):
         initial_view_state=view_state, layers=[layer_toiture], tooltip={"text": "{nom}"}
     ))
 
-def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance_kw=None):
+def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance_kw=None, type_rapport="hydro"):
     buffer = BytesIO()
 
     doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -407,8 +407,8 @@ def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance
     elements.append(table)
     elements.append(Spacer(1, 18))
 
-    if puissance_kw is not None:
-        elements.append(Paragraph("Schéma indicatif de dimensionnement", styles["Heading2"]))
+    if puissance_kw is not None and type_rapport == "hydro":
+        elements.append(Paragraph("Schéma indicatif de dimensionnement hydroélectrique", styles["Heading2"]))
         schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
         elements.append(RLImage(schema_buffer, width=420, height=320))
         elements.append(Spacer(1, 12))
@@ -761,11 +761,12 @@ elif mode_calcul == "Calcul simple":
     puissance_affichage_kw = max(float(puissance_kw), 1)
 
     pdf = generer_pdf_rapport(
-    "Rapport SIMHYDRO - Calcul simple",
-    donnees_pdf,
-    latitude=latitude,
-    longitude=longitude,
-    puissance_kw=puissance_affichage_kw
+        "Rapport SIMHYDRO - Photovoltaïque bâtiment",
+        donnees_pdf,
+        latitude=latitude,
+        longitude=longitude,
+        puissance_kw=max(puissance_kwc, 1),
+        type_rapport="pv"
     )
 
     st.download_button(
