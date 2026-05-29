@@ -43,7 +43,7 @@ st.caption("Estimation de production en remplacement ou dérivation d'un régula
 st.sidebar.header("Mode de calcul")
 mode_calcul = st.sidebar.radio(
     "Choisir le mode",
-    ["Accueil", "Calcul simple", "Import Excel - données horaires", "Comparaison multi-régulateurs"]
+    ["Accueil", "Calcul simple", "Import Excel - données horaires", "Comparaison multi-régulateurs", "Photovoltaïque - bâtiment"]
 )
 
 # ============================================================
@@ -84,6 +84,90 @@ def calcul_pertes_charge(debit_m3h, longueur_m, diametre_mm, rugosite_mm, pertes
     perte_totale_bar = perte_totale_mce * RHO_EAU * G / BAR_TO_PA
 
     return perte_totale_bar, perte_totale_mce, vitesse
+
+# ============================================================
+# Fonctions photovoltaïques bâtiment
+# ============================================================
+def facteur_orientation_pv(orientation_deg, inclinaison_deg):
+    """Facteur simplifié de correction du productible selon orientation/inclinaison.
+    0° = Nord, 90° = Est, 180° = Sud, 270° = Ouest.
+    """
+    ecart_sud = abs(((orientation_deg - 180 + 180) % 360) - 180)
+    facteur_azimut = max(0.55, 1 - 0.35 * (ecart_sud / 180) ** 1.4)
+    facteur_inclinaison = max(0.80, 1 - 0.12 * abs(inclinaison_deg - 30) / 60)
+    return facteur_azimut * facteur_inclinaison
+
+def calcul_pv(surface_m2, puissance_module_wc, surface_module_m2, latitude, orientation_deg, inclinaison_deg,
+              productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2):
+    surface_exploitable = max(surface_m2 - marge_maintenance_m2, 0)
+    nb_modules = int(surface_exploitable // surface_module_m2) if surface_module_m2 > 0 else 0
+    puissance_kwc = nb_modules * puissance_module_wc / 1000
+    facteur_orientation = facteur_orientation_pv(orientation_deg, inclinaison_deg)
+    productible_specifique = productible_ref_kwh_kwc * facteur_orientation * coeff_ombrage * performance_ratio
+    production_kwh_an = puissance_kwc * productible_specifique
+    puissance_onduleur_kva = puissance_kwc / ratio_dc_ac if ratio_dc_ac > 0 else 0
+    return {
+        "surface_exploitable_m2": surface_exploitable,
+        "nb_modules": nb_modules,
+        "puissance_kwc": puissance_kwc,
+        "facteur_orientation": facteur_orientation,
+        "productible_specifique": productible_specifique,
+        "production_kwh_an": production_kwh_an,
+        "puissance_onduleur_kva": puissance_onduleur_kva
+    }
+
+def afficher_schema_pv(longueur_toiture_m, largeur_toiture_m, nb_modules, surface_module_m2, inclinaison_deg, orientation_deg):
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.add_patch(plt.Rectangle((0, 0), longueur_toiture_m, largeur_toiture_m, fill=False, linewidth=2))
+    ax.text(longueur_toiture_m / 2, largeur_toiture_m + 0.5, "Toiture / zone exploitable", ha="center", fontsize=11)
+
+    ratio_module = 1.7 / 1.1
+    module_l = min(1.7, longueur_toiture_m / 10)
+    module_w = module_l / ratio_module
+    espacement = 0.15
+    x, y = 0.4, 0.4
+    modules_dessines = 0
+    while y + module_w < largeur_toiture_m - 0.4 and modules_dessines < nb_modules:
+        x = 0.4
+        while x + module_l < longueur_toiture_m - 0.4 and modules_dessines < nb_modules:
+            ax.add_patch(plt.Rectangle((x, y), module_l, module_w, fill=False, linewidth=1))
+            modules_dessines += 1
+            x += module_l + espacement
+        y += module_w + espacement
+
+    ax.annotate(f"{longueur_toiture_m:.1f} m", xy=(0, -0.4), xytext=(longueur_toiture_m/2, -0.4), ha="center", arrowprops=dict(arrowstyle="<->"))
+    ax.annotate(f"{largeur_toiture_m:.1f} m", xy=(-0.4, 0), xytext=(-0.4, largeur_toiture_m/2), va="center", rotation=90, arrowprops=dict(arrowstyle="<->"))
+    ax.set_title(f"Schéma indicatif d'implantation PV\nModules affichés : {modules_dessines}/{nb_modules} - Orientation {orientation_deg:.0f}° - Inclinaison {inclinaison_deg:.0f}°")
+    ax.set_aspect("equal")
+    ax.set_xlim(-1, longueur_toiture_m + 1)
+    ax.set_ylim(-1, largeur_toiture_m + 1.5)
+    ax.axis("off")
+    st.pyplot(fig)
+
+def afficher_carte_pv(latitude, longitude, longueur_m, largeur_m):
+    m_lat = 1 / 111320
+    m_lon = 1 / (111320 * np.cos(np.radians(latitude)))
+    demi_l = longueur_m / 2
+    demi_w = largeur_m / 2
+    df_toiture = pd.DataFrame({
+        "polygon": [[[
+            longitude - demi_l * m_lon, latitude - demi_w * m_lat],
+            [longitude + demi_l * m_lon, latitude - demi_w * m_lat],
+            [longitude + demi_l * m_lon, latitude + demi_w * m_lat],
+            [longitude - demi_l * m_lon, latitude + demi_w * m_lat],
+        ]],
+        "nom": ["Zone photovoltaïque"]
+    })
+    layer_toiture = pdk.Layer(
+        "PolygonLayer", data=df_toiture, get_polygon="polygon",
+        get_fill_color=[255, 210, 0, 120], get_line_color=[0, 0, 0],
+        line_width_min_pixels=2, pickable=True
+    )
+    view_state = pdk.ViewState(latitude=latitude, longitude=longitude, zoom=19, pitch=0)
+    st.pydeck_chart(pdk.Deck(
+        map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        initial_view_state=view_state, layers=[layer_toiture], tooltip={"text": "{nom}"}
+    ))
 
 def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance_kw=None):
     buffer = BytesIO()
@@ -1144,6 +1228,112 @@ elif mode_calcul == "Import Excel - données horaires":
     else:
         st.info("Importe un fichier Excel pour lancer la simulation horaire.")
         
+
+# ============================================================
+# MODE PV : PHOTOVOLTAÏQUE BÂTIMENT
+# ============================================================
+elif mode_calcul == "Photovoltaïque - bâtiment":
+    st.sidebar.header("Données bâtiment")
+    surface_toiture_m2 = st.sidebar.number_input("Surface de toiture disponible (m²)", min_value=0.0, value=500.0, step=10.0)
+    longueur_toiture_m = st.sidebar.number_input("Longueur indicative de la zone PV (m)", min_value=1.0, value=25.0, step=1.0)
+    largeur_toiture_m = st.sidebar.number_input("Largeur indicative de la zone PV (m)", min_value=1.0, value=20.0, step=1.0)
+    marge_maintenance_m2 = st.sidebar.number_input("Surface réservée maintenance / obstacles (m²)", min_value=0.0, value=50.0, step=5.0)
+
+    st.sidebar.header("Localisation")
+    latitude = st.sidebar.number_input("Latitude GPS", value=43.7000, format="%.6f", key="pv_lat")
+    longitude = st.sidebar.number_input("Longitude GPS", value=7.2500, format="%.6f", key="pv_lon")
+
+    st.sidebar.header("Orientation et implantation")
+    orientation_deg = st.sidebar.slider("Orientation des panneaux : 180° = Sud", 0, 359, 180, 1)
+    inclinaison_deg = st.sidebar.slider("Inclinaison des panneaux", 0, 60, 30, 1)
+    coeff_ombrage = st.sidebar.slider("Coefficient sans ombrage", 0.50, 1.00, 0.95, 0.01)
+
+    st.sidebar.header("Modules et onduleurs")
+    puissance_module_wc = st.sidebar.number_input("Puissance unitaire module (Wc)", min_value=100.0, value=450.0, step=10.0)
+    surface_module_m2 = st.sidebar.number_input("Surface unitaire module (m²)", min_value=0.5, value=2.1, step=0.1)
+    productible_ref_kwh_kwc = st.sidebar.number_input("Productible local de référence plein Sud (kWh/kWc/an)", min_value=500.0, value=1450.0, step=10.0)
+    performance_ratio = st.sidebar.slider("Performance Ratio global", 0.60, 0.95, 0.85, 0.01)
+    ratio_dc_ac = st.sidebar.slider("Ratio DC/AC panneaux / onduleurs", 1.00, 1.50, 1.25, 0.01)
+
+    st.sidebar.header("Économie")
+    prix_electricite = st.sidebar.number_input("Valeur du kWh produit (€ / kWh)", min_value=0.0, value=0.15, step=0.01, key="pv_prix")
+    investissement_kwc = st.sidebar.number_input("Investissement estimé (€ / kWc)", min_value=0.0, value=1000.0, step=50.0)
+    facteur_co2 = st.sidebar.number_input("Facteur CO₂ évité (kgCO₂/kWh)", min_value=0.0, value=0.052, step=0.001, key="pv_co2")
+
+    resultats = calcul_pv(
+        surface_toiture_m2, puissance_module_wc, surface_module_m2, latitude, orientation_deg, inclinaison_deg,
+        productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2
+    )
+
+    production_kwh_an = resultats["production_kwh_an"]
+    puissance_kwc = resultats["puissance_kwc"]
+    investissement = puissance_kwc * investissement_kwc
+    gain_euros_an = production_kwh_an * prix_electricite
+    co2_evite_kg_an = production_kwh_an * facteur_co2
+    tri = investissement / gain_euros_an if gain_euros_an > 0 else None
+
+    st.header("Dimensionnement photovoltaïque bâtiment")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Surface exploitable", f"{resultats['surface_exploitable_m2']:.0f} m²")
+    col2.metric("Nombre de modules", f"{resultats['nb_modules']}")
+    col3.metric("Puissance installée", f"{puissance_kwc:.1f} kWc")
+    col4.metric("Onduleurs conseillés", f"{resultats['puissance_onduleur_kva']:.1f} kVA")
+
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("Productible spécifique", f"{resultats['productible_specifique']:.0f} kWh/kWc/an")
+    col6.metric("Production annuelle", f"{production_kwh_an:,.0f} kWh/an".replace(",", " "))
+    col7.metric("Gain annuel", f"{gain_euros_an:,.0f} €/an".replace(",", " "))
+    col8.metric("TRI brut", f"{tri:.1f} ans" if tri is not None else "Non calculable")
+
+    st.metric("CO₂ évité", f"{co2_evite_kg_an:,.0f} kgCO₂/an".replace(",", " "))
+
+    st.header("Positionnement cartographique")
+    afficher_carte_pv(latitude, longitude, longueur_toiture_m, largeur_toiture_m)
+
+    st.header("Schéma indicatif d'implantation")
+    afficher_schema_pv(longueur_toiture_m, largeur_toiture_m, resultats["nb_modules"], surface_module_m2, inclinaison_deg, orientation_deg)
+
+    st.header("Sensibilité à l'orientation")
+    orientations = np.arange(0, 360, 10)
+    productions = []
+    for ori in orientations:
+        r = calcul_pv(surface_toiture_m2, puissance_module_wc, surface_module_m2, latitude, ori, inclinaison_deg,
+                      productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2)
+        productions.append(r["production_kwh_an"])
+    df_sensibilite = pd.DataFrame({"Orientation (°)": orientations, "Production annuelle (kWh/an)": productions})
+    fig, ax = plt.subplots()
+    ax.plot(df_sensibilite["Orientation (°)"], df_sensibilite["Production annuelle (kWh/an)"])
+    ax.set_xlabel("Orientation (°) - 180° = Sud")
+    ax.set_ylabel("Production annuelle (kWh/an)")
+    ax.set_title("Sensibilité du productible à l'orientation")
+    ax.grid(True)
+    st.pyplot(fig)
+    st.dataframe(df_sensibilite, use_container_width=True)
+
+    st.header("Export")
+    donnees_pdf = {
+        "Mode": "Photovoltaïque bâtiment",
+        "Surface toiture disponible": f"{surface_toiture_m2:.0f} m²",
+        "Surface exploitable": f"{resultats['surface_exploitable_m2']:.0f} m²",
+        "Nombre de modules": f"{resultats['nb_modules']}",
+        "Puissance installée": f"{puissance_kwc:.1f} kWc",
+        "Puissance onduleurs": f"{resultats['puissance_onduleur_kva']:.1f} kVA",
+        "Orientation": f"{orientation_deg:.0f}°",
+        "Inclinaison": f"{inclinaison_deg:.0f}°",
+        "Productible spécifique": f"{resultats['productible_specifique']:.0f} kWh/kWc/an",
+        "Production annuelle": f"{production_kwh_an:.0f} kWh/an",
+        "Gain annuel": f"{gain_euros_an:.0f} EUR/an",
+        "CO2 évité": f"{co2_evite_kg_an:.0f} kgCO2/an",
+        "TRI brut": f"{tri:.1f} ans" if tri is not None else "Non calculable"
+    }
+    pdf = generer_pdf_rapport("Rapport SIMHYDRO - Photovoltaïque bâtiment", donnees_pdf, latitude=latitude, longitude=longitude, puissance_kw=max(puissance_kwc, 1))
+    st.download_button("Télécharger le rapport PDF", data=pdf, file_name="rapport_pv_batiment.pdf", mime="application/pdf")
+
+    csv = df_sensibilite.to_csv(index=False, sep=";").encode("utf-8")
+    st.download_button("Télécharger la sensibilité orientation CSV", data=csv, file_name="sensibilite_orientation_pv.csv", mime="text/csv")
+
+    st.info("Méthode simplifiée : le productible est estimé à partir d'un productible local de référence, corrigé par l'orientation, l'inclinaison, l'ombrage et le Performance Ratio. Pour une étude exécution, valider avec PVsyst ou PVGIS.")
+
 
 st.markdown("""
 ---
