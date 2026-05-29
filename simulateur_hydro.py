@@ -779,9 +779,9 @@ elif mode_calcul == "Calcul simple":
         "Rapport SIMHYDRO - Photovoltaïque bâtiment",
         donnees_pdf,
         latitude=latitude,
-        longitude=longitude
+        longitude=longitude,
+        type_rapport="pv"
     )
-
     st.download_button(
         label="Télécharger le rapport PDF",
         data=pdf,
@@ -1414,7 +1414,14 @@ elif mode_calcul == "Import Excel - données horaires":
             }
             puissance_affichage_kw = max(float(puissance_kw), 1)
 
-            pdf = generer_pdf_rapport("Rapport SIMHYDRO - Données horaires", donnees_pdf)
+            pdf = generer_pdf_rapport(
+                "Rapport SIMHYDRO - Calcul simple",
+                donnees_pdf,
+                latitude=latitude,
+                longitude=longitude,
+                puissance_kw=puissance_affichage_kw,
+                type_rapport="hydro"
+            )
 
             st.download_button(
                 label="Télécharger le rapport PDF",
