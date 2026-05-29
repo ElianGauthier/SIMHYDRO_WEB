@@ -765,8 +765,7 @@ elif mode_calcul == "Calcul simple":
         donnees_pdf,
         latitude=latitude,
         longitude=longitude,
-        puissance_kw=max(puissance_kwc, 1),
-        type_rapport="pv"
+        puissance_kw=None
     )
 
     st.download_button(
