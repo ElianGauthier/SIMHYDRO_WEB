@@ -407,11 +407,26 @@ def generer_pdf_rapport(titre, donnees, latitude=None, longitude=None, puissance
     elements.append(table)
     elements.append(Spacer(1, 18))
 
-    if puissance_kw is not None and type_rapport == "hydro":
-        elements.append(Paragraph("Schéma indicatif de dimensionnement hydroélectrique", styles["Heading2"]))
-        schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
-        elements.append(RLImage(schema_buffer, width=420, height=320))
-        elements.append(Spacer(1, 12))
+# Affichage du schéma uniquement pour l'hydro
+if puissance_kw is not None and titre.startswith("Rapport SIMHYDRO - Calcul"):
+    elements.append(
+        Paragraph(
+            "Schéma indicatif de dimensionnement hydroélectrique",
+            styles["Heading2"]
+        )
+    )
+
+    schema_buffer = generer_image_schema_dimensionnement(puissance_kw)
+
+    elements.append(
+        RLImage(
+            schema_buffer,
+            width=420,
+            height=320
+        )
+    )
+
+    elements.append(Spacer(1, 12))
 
     elements.append(Paragraph(
         "Note : les résultats sont indicatifs et doivent être validés par une étude hydraulique détaillée.",
@@ -764,8 +779,7 @@ elif mode_calcul == "Calcul simple":
         "Rapport SIMHYDRO - Photovoltaïque bâtiment",
         donnees_pdf,
         latitude=latitude,
-        longitude=longitude,
-        puissance_kw=None
+        longitude=longitude
     )
 
     st.download_button(
