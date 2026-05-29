@@ -11,6 +11,13 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+
+# Imports optionnels pour les masques proches automatiques
+try:
+    import requests
+except Exception:
+    requests = None
+
 # ============================================================
 # Simulateur de production hydroélectrique sur réseau d'eau
 # Avec mode simple + import Excel de données horaires
@@ -98,12 +105,19 @@ def facteur_orientation_pv(orientation_deg, inclinaison_deg):
     return facteur_azimut * facteur_inclinaison
 
 def calcul_pv(surface_m2, puissance_module_wc, surface_module_m2, latitude, orientation_deg, inclinaison_deg,
-              productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2):
+              productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2,
+              coeff_masques_proches=1.0):
     surface_exploitable = max(surface_m2 - marge_maintenance_m2, 0)
     nb_modules = int(surface_exploitable // surface_module_m2) if surface_module_m2 > 0 else 0
     puissance_kwc = nb_modules * puissance_module_wc / 1000
     facteur_orientation = facteur_orientation_pv(orientation_deg, inclinaison_deg)
-    productible_specifique = productible_ref_kwh_kwc * facteur_orientation * coeff_ombrage * performance_ratio
+    productible_specifique = (
+        productible_ref_kwh_kwc
+        * facteur_orientation
+        * coeff_ombrage
+        * coeff_masques_proches
+        * performance_ratio
+    )
     production_kwh_an = puissance_kwc * productible_specifique
     puissance_onduleur_kva = puissance_kwc / ratio_dc_ac if ratio_dc_ac > 0 else 0
     return {
@@ -111,10 +125,190 @@ def calcul_pv(surface_m2, puissance_module_wc, surface_module_m2, latitude, orie
         "nb_modules": nb_modules,
         "puissance_kwc": puissance_kwc,
         "facteur_orientation": facteur_orientation,
+        "coeff_masques_proches": coeff_masques_proches,
         "productible_specifique": productible_specifique,
         "production_kwh_an": production_kwh_an,
         "puissance_onduleur_kva": puissance_onduleur_kva
     }
+
+# ============================================================
+# Masques proches PV : bâtiments OSM + obstacles manuels
+# ============================================================
+def distance_azimut_m(lat1, lon1, lat2, lon2):
+    """Distance et azimut entre deux points GPS. Azimut : 0° Nord, 90° Est, 180° Sud."""
+    r = 6371000
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dphi = np.radians(lat2 - lat1)
+    dlambda = np.radians(lon2 - lon1)
+    a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
+    distance = 2 * r * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    y = np.sin(dlambda) * np.cos(phi2)
+    x = np.cos(phi1) * np.sin(phi2) - np.sin(phi1) * np.cos(phi2) * np.cos(dlambda)
+    azimut = (np.degrees(np.arctan2(y, x)) + 360) % 360
+    return distance, azimut
+
+def lire_hauteur_batiment_osm(tags, hauteur_defaut_m=10.0):
+    """Déduit une hauteur bâtiment à partir des tags OSM : height ou building:levels."""
+    if not tags:
+        return hauteur_defaut_m
+    hauteur = tags.get("height")
+    if hauteur:
+        try:
+            return float(str(hauteur).replace("m", "").replace(",", ".").strip())
+        except Exception:
+            pass
+    niveaux = tags.get("building:levels")
+    if niveaux:
+        try:
+            return float(str(niveaux).replace(",", ".")) * 3.0
+        except Exception:
+            pass
+    return hauteur_defaut_m
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def recuperer_batiments_osm(latitude, longitude, rayon_m=250, hauteur_defaut_m=10.0):
+    """Récupère les bâtiments OSM proches via Overpass API.
+    Limite : OSM contient souvent l'emprise, mais pas toujours la hauteur.
+    """
+    if requests is None:
+        return pd.DataFrame()
+
+    requete = f"""
+    [out:json][timeout:25];
+    (
+      way["building"](around:{rayon_m},{latitude},{longitude});
+      relation["building"](around:{rayon_m},{latitude},{longitude});
+    );
+    out center tags;
+    """
+    try:
+        r = requests.post("https://overpass-api.de/api/interpreter", data={"data": requete}, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return pd.DataFrame()
+
+    batiments = []
+    for element in data.get("elements", []):
+        centre = element.get("center")
+        if not centre:
+            continue
+        lat_b = centre.get("lat")
+        lon_b = centre.get("lon")
+        if lat_b is None or lon_b is None:
+            continue
+        tags = element.get("tags", {})
+        distance_m, azimut_deg = distance_azimut_m(latitude, longitude, lat_b, lon_b)
+        if distance_m <= 1:
+            continue
+        hauteur_m = lire_hauteur_batiment_osm(tags, hauteur_defaut_m)
+        angle_masque_deg = np.degrees(np.arctan2(hauteur_m, distance_m))
+        batiments.append({
+            "source": "OSM bâtiment",
+            "nom": tags.get("name", "Bâtiment OSM"),
+            "lat": lat_b,
+            "lon": lon_b,
+            "distance_m": distance_m,
+            "azimut_deg": azimut_deg,
+            "largeur_angulaire_deg": max(8, min(35, np.degrees(2 * np.arctan2(10, max(distance_m, 1))))),
+            "hauteur_m": hauteur_m,
+            "angle_masque_deg": angle_masque_deg,
+        })
+    return pd.DataFrame(batiments)
+
+def profil_horizon_depuis_obstacles(obstacles_df, pas_azimut=5):
+    azimuts = np.arange(0, 360, pas_azimut)
+    horizon = pd.DataFrame({"azimut_deg": azimuts, "horizon_deg": np.zeros_like(azimuts, dtype=float)})
+    if obstacles_df is None or obstacles_df.empty:
+        return horizon
+
+    for _, obs in obstacles_df.iterrows():
+        az_c = float(obs["azimut_deg"]) % 360
+        demi_largeur = float(obs.get("largeur_angulaire_deg", 15)) / 2
+        angle = max(0, float(obs.get("angle_masque_deg", 0)))
+        for i, az in enumerate(azimuts):
+            ecart = abs(((az - az_c + 180) % 360) - 180)
+            if ecart <= demi_largeur:
+                horizon.loc[i, "horizon_deg"] = max(horizon.loc[i, "horizon_deg"], angle)
+    return horizon
+
+def position_solaire_approchee(latitude, jour_annee, heure_solaire):
+    """Position solaire simplifiée suffisante pour un pré-dimensionnement annuel."""
+    lat_rad = np.radians(latitude)
+    declinaison = np.radians(23.45 * np.sin(np.radians(360 * (284 + jour_annee) / 365)))
+    angle_horaire = np.radians(15 * (heure_solaire - 12))
+    sin_elev = np.sin(lat_rad) * np.sin(declinaison) + np.cos(lat_rad) * np.cos(declinaison) * np.cos(angle_horaire)
+    elev = np.degrees(np.arcsin(np.clip(sin_elev, -1, 1)))
+    cos_elev = np.cos(np.radians(elev))
+    sin_az = -np.sin(angle_horaire) * np.cos(declinaison) / max(cos_elev, 1e-6)
+    cos_az = (np.sin(declinaison) - np.sin(np.radians(elev)) * np.sin(lat_rad)) / (max(cos_elev, 1e-6) * np.cos(lat_rad))
+    az = (np.degrees(np.arctan2(sin_az, cos_az)) + 180) % 360
+    return elev, az
+
+def coefficient_masque_solaire(latitude, horizon_df):
+    """Calcule un coefficient annuel simplifié : 1 = aucun masque, 0.9 = 10 % pertes d'irradiation directe pondérée."""
+    if horizon_df is None or horizon_df.empty:
+        return 1.0, 0.0
+    total = 0.0
+    perdu = 0.0
+    for jour in range(1, 366, 5):
+        for heure in np.arange(5, 21, 0.5):
+            elev, az = position_solaire_approchee(latitude, jour, heure)
+            if elev <= 0:
+                continue
+            poids = max(np.sin(np.radians(elev)), 0)
+            horizon = np.interp(az, horizon_df["azimut_deg"], horizon_df["horizon_deg"], period=360)
+            total += poids
+            if elev < horizon:
+                perdu += poids
+    perte = perdu / total if total > 0 else 0
+    coeff = max(0.50, min(1.0, 1 - perte))
+    return coeff, perte
+
+def afficher_horizon_masques(horizon_df):
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(horizon_df["azimut_deg"], horizon_df["horizon_deg"])
+    ax.set_xlabel("Azimut (°) - 180° = Sud")
+    ax.set_ylabel("Hauteur de masque (°)")
+    ax.set_title("Profil d'horizon des masques proches")
+    ax.set_xlim(0, 360)
+    ax.grid(True)
+    st.pyplot(fig)
+
+def afficher_carte_masques(latitude, longitude, longueur_m, largeur_m, obstacles_df=None):
+    m_lat = 1 / 111320
+    m_lon = 1 / (111320 * np.cos(np.radians(latitude)))
+    demi_l = longueur_m / 2
+    demi_w = largeur_m / 2
+    df_toiture = pd.DataFrame({
+        "polygon": [[
+            [longitude - demi_l * m_lon, latitude - demi_w * m_lat],
+            [longitude + demi_l * m_lon, latitude - demi_w * m_lat],
+            [longitude + demi_l * m_lon, latitude + demi_w * m_lat],
+            [longitude - demi_l * m_lon, latitude + demi_w * m_lat],
+        ]],
+        "nom": ["Zone photovoltaïque"]
+    })
+    layers = [pdk.Layer(
+        "PolygonLayer", data=df_toiture, get_polygon="polygon",
+        get_fill_color=[255, 210, 0, 120], get_line_color=[0, 0, 0],
+        line_width_min_pixels=2, pickable=True
+    )]
+    if obstacles_df is not None and not obstacles_df.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=obstacles_df, get_position="[lon, lat]",
+            get_radius=4, get_fill_color=[200, 60, 60, 200],
+            get_line_color=[0, 0, 0], line_width_min_pixels=1, pickable=True
+        ))
+        layers.append(pdk.Layer(
+            "TextLayer", data=obstacles_df, get_position="[lon, lat]", get_text="nom",
+            get_size=12, get_color=[0, 0, 0], get_pixel_offset="[0, 18]"
+        ))
+    view_state = pdk.ViewState(latitude=latitude, longitude=longitude, zoom=18, pitch=0)
+    st.pydeck_chart(pdk.Deck(
+        map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        initial_view_state=view_state, layers=layers, tooltip={"text": "{nom}\nHauteur : {hauteur_m} m\nMasque : {angle_masque_deg}°"}
+    ))
 
 def afficher_schema_pv(longueur_toiture_m, largeur_toiture_m, nb_modules, surface_module_m2, inclinaison_deg, orientation_deg):
     fig, ax = plt.subplots(figsize=(9, 6))
@@ -1231,6 +1425,7 @@ elif mode_calcul == "Import Excel - données horaires":
 
 # ============================================================
 # MODE PV : PHOTOVOLTAÏQUE BÂTIMENT
+# Avec masques proches : bâtiments OSM + obstacles manuels
 # ============================================================
 elif mode_calcul == "Photovoltaïque - bâtiment":
     st.sidebar.header("Données bâtiment")
@@ -1246,12 +1441,47 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
     st.sidebar.header("Orientation et implantation")
     orientation_deg = st.sidebar.slider("Orientation des panneaux : 180° = Sud", 0, 359, 180, 1)
     inclinaison_deg = st.sidebar.slider("Inclinaison des panneaux", 0, 60, 30, 1)
-    coeff_ombrage = st.sidebar.slider("Coefficient sans ombrage", 0.50, 1.00, 0.95, 0.01)
+    coeff_ombrage_general = st.sidebar.slider("Coefficient autres pertes d'ombrage", 0.50, 1.00, 0.98, 0.01)
+
+    st.sidebar.header("Masques proches")
+    utiliser_osm = st.sidebar.checkbox("Récupérer automatiquement les bâtiments OpenStreetMap", value=True)
+    rayon_osm_m = st.sidebar.slider("Rayon de recherche bâtiments OSM (m)", 50, 500, 250, 25)
+    hauteur_defaut_batiment_m = st.sidebar.number_input("Hauteur par défaut bâtiment si inconnue (m)", min_value=3.0, value=10.0, step=1.0)
+    hauteur_capteur_m = st.sidebar.number_input("Hauteur approximative des modules/toiture (m)", min_value=0.0, value=6.0, step=0.5)
+
+    st.sidebar.caption("Ajout manuel utile pour arbres, acrotères, cheminées, bâtiments absents d'OSM.")
+    nb_obstacles_manuels = st.sidebar.number_input("Nombre d'obstacles manuels", min_value=0, max_value=10, value=0, step=1)
+
+    obstacles_manuels = []
+    for i in range(int(nb_obstacles_manuels)):
+        with st.sidebar.expander(f"Obstacle manuel {i+1}"):
+            nom = st.text_input("Nom", value=f"Obstacle {i+1}", key=f"obs_nom_{i}")
+            type_obs = st.selectbox("Type", ["Bâtiment", "Arbre", "Acrotère", "Cheminée", "Équipement toiture", "Autre"], key=f"obs_type_{i}")
+            azimut = st.slider("Azimut depuis les panneaux (°)", 0, 359, 180, 1, key=f"obs_az_{i}")
+            distance = st.number_input("Distance horizontale (m)", min_value=1.0, value=20.0, step=1.0, key=f"obs_dist_{i}")
+            hauteur = st.number_input("Hauteur obstacle au-dessus du sol (m)", min_value=0.0, value=12.0, step=0.5, key=f"obs_h_{i}")
+            largeur = st.slider("Largeur apparente (°)", 1, 90, 20, 1, key=f"obs_larg_{i}")
+
+            hauteur_relative = max(0, hauteur - hauteur_capteur_m)
+            angle_masque = np.degrees(np.arctan2(hauteur_relative, distance))
+            dlat = (distance * np.cos(np.radians(azimut))) / 111320
+            dlon = (distance * np.sin(np.radians(azimut))) / (111320 * np.cos(np.radians(latitude)))
+            obstacles_manuels.append({
+                "source": "Manuel",
+                "nom": f"{type_obs} - {nom}",
+                "lat": latitude + dlat,
+                "lon": longitude + dlon,
+                "distance_m": distance,
+                "azimut_deg": azimut,
+                "largeur_angulaire_deg": largeur,
+                "hauteur_m": hauteur,
+                "angle_masque_deg": angle_masque,
+            })
 
     st.sidebar.header("Modules et onduleurs")
     puissance_module_wc = st.sidebar.number_input("Puissance unitaire module (Wc)", min_value=100.0, value=450.0, step=10.0)
     surface_module_m2 = st.sidebar.number_input("Surface unitaire module (m²)", min_value=0.5, value=2.1, step=0.1)
-    productible_ref_kwh_kwc = st.sidebar.number_input("Productible local de référence plein Sud (kWh/kWc/an)", min_value=500.0, value=1450.0, step=10.0)
+    productible_ref_kwh_kwc = st.sidebar.number_input("Productible local de référence plein Sud sans masque (kWh/kWc/an)", min_value=500.0, value=1450.0, step=10.0)
     performance_ratio = st.sidebar.slider("Performance Ratio global", 0.60, 0.95, 0.85, 0.01)
     ratio_dc_ac = st.sidebar.slider("Ratio DC/AC panneaux / onduleurs", 1.00, 1.50, 1.25, 0.01)
 
@@ -1260,9 +1490,27 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
     investissement_kwc = st.sidebar.number_input("Investissement estimé (€ / kWc)", min_value=0.0, value=1000.0, step=50.0)
     facteur_co2 = st.sidebar.number_input("Facteur CO₂ évité (kgCO₂/kWh)", min_value=0.0, value=0.052, step=0.001, key="pv_co2")
 
+    # Récupération bâtiments OSM
+    df_osm = pd.DataFrame()
+    if utiliser_osm:
+        with st.spinner("Récupération des bâtiments OpenStreetMap proches..."):
+            df_osm = recuperer_batiments_osm(latitude, longitude, rayon_osm_m, hauteur_defaut_batiment_m)
+            if not df_osm.empty:
+                # Correction : hauteur relative par rapport à la toiture/modules
+                df_osm["angle_masque_deg"] = np.degrees(
+                    np.arctan2(np.maximum(df_osm["hauteur_m"] - hauteur_capteur_m, 0), df_osm["distance_m"])
+                )
+
+    df_manuels = pd.DataFrame(obstacles_manuels)
+    obstacles_df = pd.concat([df_osm, df_manuels], ignore_index=True) if not df_manuels.empty or not df_osm.empty else pd.DataFrame()
+
+    horizon_df = profil_horizon_depuis_obstacles(obstacles_df, pas_azimut=5)
+    coeff_masques_proches, perte_masques_proches = coefficient_masque_solaire(latitude, horizon_df)
+
     resultats = calcul_pv(
         surface_toiture_m2, puissance_module_wc, surface_module_m2, latitude, orientation_deg, inclinaison_deg,
-        productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2
+        productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage_general, marge_maintenance_m2,
+        coeff_masques_proches=coeff_masques_proches
     )
 
     production_kwh_an = resultats["production_kwh_an"]
@@ -1280,15 +1528,27 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
     col4.metric("Onduleurs conseillés", f"{resultats['puissance_onduleur_kva']:.1f} kVA")
 
     col5, col6, col7, col8 = st.columns(4)
-    col5.metric("Productible spécifique", f"{resultats['productible_specifique']:.0f} kWh/kWc/an")
-    col6.metric("Production annuelle", f"{production_kwh_an:,.0f} kWh/an".replace(",", " "))
-    col7.metric("Gain annuel", f"{gain_euros_an:,.0f} €/an".replace(",", " "))
-    col8.metric("TRI brut", f"{tri:.1f} ans" if tri is not None else "Non calculable")
+    col5.metric("Coeff. masques proches", f"{coeff_masques_proches:.3f}")
+    col6.metric("Pertes masques proches", f"{perte_masques_proches*100:.1f} %")
+    col7.metric("Productible spécifique", f"{resultats['productible_specifique']:.0f} kWh/kWc/an")
+    col8.metric("Production annuelle", f"{production_kwh_an:,.0f} kWh/an".replace(",", " "))
 
-    st.metric("CO₂ évité", f"{co2_evite_kg_an:,.0f} kgCO₂/an".replace(",", " "))
+    col9, col10, col11 = st.columns(3)
+    col9.metric("Gain annuel", f"{gain_euros_an:,.0f} €/an".replace(",", " "))
+    col10.metric("CO₂ évité", f"{co2_evite_kg_an:,.0f} kgCO₂/an".replace(",", " "))
+    col11.metric("TRI brut", f"{tri:.1f} ans" if tri is not None else "Non calculable")
+
+    st.header("Masques proches détectés / saisis")
+    if obstacles_df.empty:
+        st.info("Aucun masque proche détecté ou saisi. Le coefficient de masque proche reste à 1.")
+    else:
+        st.dataframe(obstacles_df[["source", "nom", "distance_m", "azimut_deg", "largeur_angulaire_deg", "hauteur_m", "angle_masque_deg"]], use_container_width=True)
+
+    st.header("Profil d'horizon proche")
+    afficher_horizon_masques(horizon_df)
 
     st.header("Positionnement cartographique")
-    afficher_carte_pv(latitude, longitude, longueur_toiture_m, largeur_toiture_m)
+    afficher_carte_masques(latitude, longitude, longueur_toiture_m, largeur_toiture_m, obstacles_df)
 
     st.header("Schéma indicatif d'implantation")
     afficher_schema_pv(longueur_toiture_m, largeur_toiture_m, resultats["nb_modules"], surface_module_m2, inclinaison_deg, orientation_deg)
@@ -1298,21 +1558,22 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
     productions = []
     for ori in orientations:
         r = calcul_pv(surface_toiture_m2, puissance_module_wc, surface_module_m2, latitude, ori, inclinaison_deg,
-                      productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage, marge_maintenance_m2)
+                      productible_ref_kwh_kwc, performance_ratio, ratio_dc_ac, coeff_ombrage_general, marge_maintenance_m2,
+                      coeff_masques_proches=coeff_masques_proches)
         productions.append(r["production_kwh_an"])
     df_sensibilite = pd.DataFrame({"Orientation (°)": orientations, "Production annuelle (kWh/an)": productions})
     fig, ax = plt.subplots()
     ax.plot(df_sensibilite["Orientation (°)"], df_sensibilite["Production annuelle (kWh/an)"])
     ax.set_xlabel("Orientation (°) - 180° = Sud")
     ax.set_ylabel("Production annuelle (kWh/an)")
-    ax.set_title("Sensibilité du productible à l'orientation")
+    ax.set_title("Sensibilité du productible à l'orientation avec masques proches")
     ax.grid(True)
     st.pyplot(fig)
     st.dataframe(df_sensibilite, use_container_width=True)
 
     st.header("Export")
     donnees_pdf = {
-        "Mode": "Photovoltaïque bâtiment",
+        "Mode": "Photovoltaïque bâtiment avec masques proches",
         "Surface toiture disponible": f"{surface_toiture_m2:.0f} m²",
         "Surface exploitable": f"{resultats['surface_exploitable_m2']:.0f} m²",
         "Nombre de modules": f"{resultats['nb_modules']}",
@@ -1320,6 +1581,8 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
         "Puissance onduleurs": f"{resultats['puissance_onduleur_kva']:.1f} kVA",
         "Orientation": f"{orientation_deg:.0f}°",
         "Inclinaison": f"{inclinaison_deg:.0f}°",
+        "Coefficient masques proches": f"{coeff_masques_proches:.3f}",
+        "Pertes masques proches": f"{perte_masques_proches*100:.1f} %",
         "Productible spécifique": f"{resultats['productible_specifique']:.0f} kWh/kWc/an",
         "Production annuelle": f"{production_kwh_an:.0f} kWh/an",
         "Gain annuel": f"{gain_euros_an:.0f} EUR/an",
@@ -1332,7 +1595,11 @@ elif mode_calcul == "Photovoltaïque - bâtiment":
     csv = df_sensibilite.to_csv(index=False, sep=";").encode("utf-8")
     st.download_button("Télécharger la sensibilité orientation CSV", data=csv, file_name="sensibilite_orientation_pv.csv", mime="text/csv")
 
-    st.info("Méthode simplifiée : le productible est estimé à partir d'un productible local de référence, corrigé par l'orientation, l'inclinaison, l'ombrage et le Performance Ratio. Pour une étude exécution, valider avec PVsyst ou PVGIS.")
+    if not obstacles_df.empty:
+        csv_obs = obstacles_df.to_csv(index=False, sep=";").encode("utf-8")
+        st.download_button("Télécharger les masques proches CSV", data=csv_obs, file_name="masques_proches_pv.csv", mime="text/csv")
+
+    st.warning("Méthode de pré-dimensionnement : les bâtiments OSM peuvent ne pas avoir de hauteur fiable, et les arbres ne sont pas détectés automatiquement. Pour une étude exécution, valider avec relevé terrain, LiDAR/drone, PVsyst ou PVGIS.")
 
 
 st.markdown("""
